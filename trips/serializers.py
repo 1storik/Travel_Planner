@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import TravelProject, ProjectPlace
 from .services import ArtInstituteService
@@ -50,13 +51,16 @@ class ProjectPlaceUpdateSerializer(serializers.ModelSerializer):
 
 
 class TravelProjectCreateSerializer(serializers.ModelSerializer):
-    places = ProjectPlaceCreateSerializer(many=True, required=False)
+    places = ProjectPlaceCreateSerializer(many=True, required=True)
 
     class Meta:
         model = TravelProject
         fields = ['id', 'name', 'description', 'start_date', 'places']
 
     def validate_places(self, value):
+        if not value:
+            raise serializers.ValidationError("A project must contain at least 1 place.")
+
         if len(value) > 10:
             raise serializers.ValidationError("A project cannot contain more than 10 places.")
 
@@ -67,12 +71,13 @@ class TravelProjectCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        places_data = validated_data.pop('places', [])
-        project = TravelProject.objects.create(**validated_data)
+        places_data = validated_data.pop('places')
 
-        created_places = []
+        with transaction.atomic():
+            project = TravelProject.objects.create(**validated_data)
 
-        try:
+            created_places = []
+
             for place_data in places_data:
                 artwork = ArtInstituteService.get_artwork(place_data['external_id'])
                 if not artwork:
@@ -89,13 +94,8 @@ class TravelProjectCreateSerializer(serializers.ModelSerializer):
                     )
                 )
 
-            if created_places:
-                ProjectPlace.objects.bulk_create(created_places)
-
+            ProjectPlace.objects.bulk_create(created_places)
             return project
-        except Exception:
-            project.delete()
-            raise
 
 
 class TravelProjectUpdateSerializer(serializers.ModelSerializer):
